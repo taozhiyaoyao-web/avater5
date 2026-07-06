@@ -289,17 +289,19 @@ async function generatePose(pose){
 </html>
 '''
 
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-MODEL = "gemini-3.1-flash-image-preview"
-ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+# ========== 豆包 API 配置 ==========
+ARK_API_KEY = os.environ.get("ARK_API_KEY", "")
+ARK_BASE_URL = os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
+MODEL = os.environ.get("ARK_MODEL", "doubao-seedream-4-5-251128")
+ENDPOINT = f"{ARK_BASE_URL}/images/generations"
 
-PROMPT_PREFIX = """请参考这张上传的人物照片，画一个 Q 版复古像素游戏风格的迷你角色（类似 Everskies / 复古 GBA 游戏角色的像素画风格，16-32 色限定色板，清晰的黑色像素描边，大头小身的 Q 版比例）。
+PROMPT_PREFIX = """Q版复古像素游戏风格的迷你角色，类似 Everskies / 复古 GBA 游戏角色的像素画风格，16-32 色限定色板，清晰的黑色像素描边，大头小身的 Q 版比例。
 
 严格要求：
-- 角色的发型、发色、肤色、瞳色、服装款式和颜色都要参考并贴近这张照片里人物的实际配色，不要换成其他颜色方案（不要用复古绿、赛博霓虹等和原图无关的配色）。
-- 背景必须是纯白色，不要任何阴影、地面、文字或装饰元素。
-- 画面里只有这一个完整角色，居中构图，全身可见。
-- 输出清晰的像素插画，不要照片写实风格。
+- 参考图中人物的发型、发色、肤色、瞳色、服装款式和颜色都要保留并贴近，不要换成其他颜色方案
+- 背景必须是纯白色，不要任何阴影、地面、文字或装饰元素
+- 画面里只有这一个完整角色，居中构图，全身可见
+- 输出清晰的像素插画，不要照片写实风格
 
 姿势要求："""
 
@@ -311,40 +313,54 @@ POSE_PROMPTS = {
 }
 
 
-def call_gemini(image_b64, mime_type, pose_id):
+def call_seedream(image_b64, mime_type, pose_id):
+    """调用豆包 Seedream 图生图 API"""
     prompt = PROMPT_PREFIX + POSE_PROMPTS[pose_id]
+    
+    # 构造 data URL（base64 图片）
+    image_data_url = f"data:{mime_type};base64,{image_b64}"
+    
     body = {
-        "contents": [{
-            "parts": [
-                {"inlineData": {"mimeType": mime_type, "data": image_b64}},
-                {"text": prompt}
-            ]
-        }],
-        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}
+        "model": MODEL,
+        "prompt": prompt,
+        "image": image_data_url,  # 参考图（支持 URL 或 base64 data URL）
+        "size": "1024x1024",      # 输出尺寸
+        "response_format": "b64_json",  # 返回 base64 格式
+        "watermark": False,       # 不加水印
     }
+    
     req = urllib.request.Request(
-        f"{ENDPOINT}?key={GOOGLE_API_KEY}",
+        ENDPOINT,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {ARK_API_KEY}",
+        },
         method="POST",
     )
+    
     try:
-        with urllib.request.urlopen(req, timeout=25) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="ignore")
-        raise ValueError(f"Gemini 接口返回 {e.code}: {detail[:200]}")
-
-    parts = (
-        data.get("candidates", [{}])[0]
-        .get("content", {})
-        .get("parts", [])
-    )
-    for p in parts:
-        inline = p.get("inlineData")
-        if inline and inline.get("data"):
-            return inline["data"], inline.get("mimeType", "image/png")
-    raise ValueError("模型没有返回图片，换个姿势或稍后重试")
+        raise ValueError(f"豆包 API 返回 {e.code}: {detail[:300]}")
+    
+    # 解析返回的图片
+    if data.get("data") and len(data["data"]) > 0:
+        image_data = data["data"][0]
+        if image_data.get("b64_json"):
+            return image_data["b64_json"], "image/png"
+        elif image_data.get("url"):
+            # 如果返回的是 URL，就下载下来转成 base64
+            try:
+                with urllib.request.urlopen(image_data["url"], timeout=30) as img_resp:
+                    img_bytes = img_resp.read()
+                    return base64.b64encode(img_bytes).decode("utf-8"), "image/png"
+            except Exception as e:
+                raise ValueError(f"下载生成图片失败: {str(e)}")
+    
+    raise ValueError("模型没有返回图片，请检查 API Key 和模型是否正确")
 
 
 def make_bounce_gif(png_b64):
@@ -400,10 +416,10 @@ def generate():
             raise ValueError("缺少 image_base64")
         if pose_id not in POSE_PROMPTS:
             raise ValueError("未知的 pose_id")
-        if not GOOGLE_API_KEY:
-            raise ValueError("服务器未配置 GOOGLE_API_KEY 环境变量")
+        if not ARK_API_KEY:
+            raise ValueError("服务器未配置 ARK_API_KEY 环境变量")
 
-        png_b64, _ = call_gemini(image_b64, mime_type, pose_id)
+        png_b64, _ = call_seedream(image_b64, mime_type, pose_id)
         gif_b64 = make_bounce_gif(png_b64)
 
         return jsonify({"gif_base64": gif_b64})
@@ -411,5 +427,5 @@ def generate():
         return jsonify({"error": str(e)}), 500
 
 
-# ========== 最关键的一行！Vercel 入口 ==========
+# ========== Vercel 入口（关键！） ==========
 handler = app.wsgi_app
