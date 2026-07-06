@@ -289,10 +289,11 @@ async function generatePose(pose){
 </html>
 '''
 
-# ========== 豆包 API 配置 ==========
+# ========== 豆包 API 配置（已更新为你的模型） ==========
 ARK_API_KEY = os.environ.get("ARK_API_KEY", "")
 ARK_BASE_URL = os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
-MODEL = os.environ.get("ARK_MODEL", "doubao-seedream-4-5-251128")
+# ✅ 已更新为你的模型：Seedream 5.0 Lite
+MODEL = os.environ.get("ARK_MODEL", "doubao-seedream-5-0-260128")
 ENDPOINT = f"{ARK_BASE_URL}/images/generations"
 
 PROMPT_PREFIX = """Q版复古像素游戏风格的迷你角色，类似 Everskies / 复古 GBA 游戏角色的像素画风格，16-32 色限定色板，清晰的黑色像素描边，大头小身的 Q 版比例。
@@ -314,7 +315,7 @@ POSE_PROMPTS = {
 
 
 def call_seedream(image_b64, mime_type, pose_id):
-    """调用豆包 Seedream 图生图 API"""
+    """调用豆包 Seedream 5.0 图生图 API"""
     prompt = PROMPT_PREFIX + POSE_PROMPTS[pose_id]
     
     # 构造 data URL（base64 图片）
@@ -323,10 +324,10 @@ def call_seedream(image_b64, mime_type, pose_id):
     body = {
         "model": MODEL,
         "prompt": prompt,
-        "image": image_data_url,  # 参考图（支持 URL 或 base64 data URL）
-        "size": "1024x1024",      # 输出尺寸
+        "image": image_data_url,      # 参考图（你的照片）
+        "size": "1024x1024",          # 输出尺寸
         "response_format": "b64_json",  # 返回 base64 格式
-        "watermark": False,       # 不加水印
+        "watermark": False,           # 不加水印
     }
     
     req = urllib.request.Request(
@@ -344,7 +345,7 @@ def call_seedream(image_b64, mime_type, pose_id):
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="ignore")
-        raise ValueError(f"豆包 API 返回 {e.code}: {detail[:300]}")
+        raise ValueError(f"豆包 API 返回 {e.code}: {detail[:500]}")
     
     # 解析返回的图片
     if data.get("data") and len(data["data"]) > 0:
@@ -360,7 +361,7 @@ def call_seedream(image_b64, mime_type, pose_id):
             except Exception as e:
                 raise ValueError(f"下载生成图片失败: {str(e)}")
     
-    raise ValueError("模型没有返回图片，请检查 API Key 和模型是否正确")
+    raise ValueError(f"模型没有返回图片，请检查 API Key 是否正确。返回内容：{json.dumps(data, ensure_ascii=False)[:300]}")
 
 
 def make_bounce_gif(png_b64):
@@ -427,5 +428,5 @@ def generate():
         return jsonify({"error": str(e)}), 500
 
 
-# ========== Vercel 入口（关键！） ==========
+# ========== Vercel 入口 ==========
 handler = app.wsgi_app
